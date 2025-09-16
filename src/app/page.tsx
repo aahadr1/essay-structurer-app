@@ -18,12 +18,15 @@ export default function Home() {
   const [reformattedText, setReformattedText] = useState<string>("");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [ttsUrl, setTtsUrl] = useState<string | null>(null);
+  const [ttsUrls, setTtsUrls] = useState<string[] | null>(null);
+  const [ttsIdx, setTtsIdx] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Auto-play when TTS URL becomes available
   useEffect(() => {
-    if (ttsUrl && audioRef.current) {
+    const currentUrl = ttsUrls?.[ttsIdx] || ttsUrl;
+    if (currentUrl && audioRef.current) {
       const el = audioRef.current;
       el.autoplay = true;
       const p: any = el.play();
@@ -31,7 +34,7 @@ export default function Home() {
         p.catch((err: any) => console.warn("Autoplay blocked or failed:", err));
       }
     }
-  }, [ttsUrl]);
+  }, [ttsUrl, ttsUrls, ttsIdx]);
 
   useEffect(() => {
     let timer: any;
@@ -177,8 +180,16 @@ export default function Home() {
           body: JSON.stringify({ text: ttsText }),
         });
         if (ttsRes.ok) {
-          const { audioUrl } = await ttsRes.json();
-          setTtsUrl(audioUrl);
+          const data = await ttsRes.json();
+          if (Array.isArray(data.audioUrls) && data.audioUrls.length) {
+            setTtsUrls(data.audioUrls);
+            setTtsIdx(0);
+            setTtsUrl(null);
+          } else if (data.audioUrl) {
+            setTtsUrls(null);
+            setTtsIdx(0);
+            setTtsUrl(data.audioUrl);
+          }
         }
       }
 
@@ -292,8 +303,16 @@ export default function Home() {
                   body: JSON.stringify({ text: finalTtsText }),
                 });
                 if (ttsRes.ok) {
-                  const { audioUrl } = await ttsRes.json();
-                  setTtsUrl(audioUrl);
+                  const data = await ttsRes.json();
+                  if (Array.isArray(data.audioUrls) && data.audioUrls.length) {
+                    setTtsUrls(data.audioUrls);
+                    setTtsIdx(0);
+                    setTtsUrl(null);
+                  } else if (data.audioUrl) {
+                    setTtsUrls(null);
+                    setTtsIdx(0);
+                    setTtsUrl(data.audioUrl);
+                  }
                 }
               }
               setPhase("outline-ready");
@@ -359,10 +378,25 @@ export default function Home() {
         </div>
       )}
 
-      {ttsUrl && (
+      {(ttsUrl || (ttsUrls && ttsUrls.length)) && (
         <div className="card">
           <div className="font-semibold mb-2">Audio outline</div>
-          <audio ref={audioRef} controls autoPlay preload="auto" src={ttsUrl} className="w-full" />
+          <audio
+            ref={audioRef}
+            controls
+            autoPlay
+            preload="auto"
+            src={ttsUrls ? ttsUrls[ttsIdx] : (ttsUrl || undefined)}
+            className="w-full"
+            onEnded={() => {
+              if (ttsUrls && ttsIdx < ttsUrls.length - 1) {
+                setTtsIdx((i) => i + 1);
+              }
+            }}
+          />
+          {ttsUrls && ttsUrls.length > 1 && (
+            <div className="text-xs text-gray-400 mt-2">Segment {ttsIdx + 1} / {ttsUrls.length}</div>
+          )}
         </div>
       )}
     </main>
