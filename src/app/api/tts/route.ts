@@ -25,21 +25,29 @@ export async function POST(req: NextRequest) {
     const prepped = prepareTextForTts(text);
 
     // Many TTS models on Replicate return an audio URL in output[0] or output.audio
-    const prediction = await replicate.predictions.create({
-      model,
-      input: {
-        text: prepped,
-        voice_id: voice,
-        speed,
-        volume,
-        pitch,
-        sample_rate: 32000,
-        bitrate: 128000,
-        channel: "mono",
-        english_normalization: false,
-        language_boost: "French"
-      } as Record<string, unknown>
-    } as any);
+    // Try multiple input shapes accepted by different TTS models
+    const ttsInputs = [
+      { text: prepped, voice_id: voice, speed, volume, pitch, sample_rate: 32000, bitrate: 128000, channel: "mono", english_normalization: false, language_boost: "French" },
+      { text: prepped, voice: voice, speed, volume, pitch },
+      { prompt: prepped, voice_id: voice },
+      { input: prepped, voice_id: voice }
+    ] as Array<Record<string, unknown>>;
+
+    let prediction: any = null;
+    let lastCreateError: any = null;
+    for (let i = 0; i < ttsInputs.length; i++) {
+      try {
+        prediction = await replicate.predictions.create({ model, input: ttsInputs[i] } as any);
+        break;
+      } catch (e: any) {
+        lastCreateError = e;
+        continue;
+      }
+    }
+    if (!prediction) {
+      console.error("TTS create failed on all input shapes", lastCreateError);
+      return NextResponse.json({ error: "TTS create failed" }, { status: 500 });
+    }
 
     let p = prediction as any;
     if (p.status !== "succeeded") {

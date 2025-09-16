@@ -61,7 +61,8 @@ Réponds UNIQUEMENT avec le texte reformaté, sans commentaires ni explications.
         if (p.status === "succeeded") break;
         if (p.status === "failed" || p.status === "canceled") {
           console.error("❌ GPT-5 reformat failed:", p.error);
-          throw new Error("GPT-5 reformatting failed");
+          // Soft fallback to original text
+          return NextResponse.json({ reformattedText: String(text || "").trim() });
         }
       }
     }
@@ -78,11 +79,18 @@ Réponds UNIQUEMENT avec le texte reformaté, sans commentaires ni explications.
       });
     }
 
-    throw new Error("GPT-5 did not return expected output");
+    // Fallback if succeeded but no output
+    return NextResponse.json({ reformattedText: String(text || "").trim() });
     
   } catch (e: any) {
     console.error("❌ REFORMAT ERROR:", e);
-    return NextResponse.json({ error: e?.message || "Reformat error" }, { status: 500 });
+    // Soft fallback to original text on any error
+    try {
+      const { text } = await req.json();
+      return NextResponse.json({ reformattedText: String(text || "").trim() });
+    } catch {
+      return NextResponse.json({ reformattedText: "" });
+    }
   }
 }
 
