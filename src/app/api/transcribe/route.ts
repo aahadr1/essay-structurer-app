@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   console.log("=== TRANSCRIBE API DEBUG ===");
   
   let audioUrl: string;
-  let modelSlug: string;
+  let modelSlug: string | undefined;
   let version: string | undefined;
   
   try {
@@ -28,20 +28,27 @@ export async function POST(req: NextRequest) {
     }
     console.log("Replicate token:", replicateToken ? "✓ configured" : "✗ missing");
 
-    const modelEnv = processEnv.REPLICATE_WHISPER_MODEL || "openai/whisper:3c08daf437fe359eb158a5123c395673f0a113dd8b4bd01ddce5936850e2a981";
-    modelSlug = modelEnv;
+    const modelEnv = processEnv.REPLICATE_WHISPER_MODEL || "";
+    modelSlug = modelEnv || undefined;
     if (modelEnv.includes(":")) {
       const [slug, ver] = modelEnv.split(":", 2);
-      modelSlug = slug;
-      version = ver;
+      modelSlug = slug || undefined;
+      version = ver || undefined;
     }
-    console.log("Using model:", modelSlug, version ? `version: ${version}` : "latest");
+    console.log("Using model from env:", modelSlug || "<none>", version ? `version: ${version}` : "latest");
   } catch (parseError) {
     console.error("❌ Failed to parse request body:", parseError);
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   try {
+    // Prepare model candidates: env first, then known stable fallbacks
+    const modelCandidates: Array<{ slug?: string; version?: string }> = [];
+    if (modelSlug || version) modelCandidates.push({ slug: modelSlug, version });
+    // Fallbacks: try known openai whisper identifiers without pinned version
+    modelCandidates.push({ slug: "openai/whisper-large-v3" });
+    modelCandidates.push({ slug: "openai/whisper" });
+
     // Try multiple input shapes accepted by different Whisper builds
     const inputsList = [
       { audio: audioUrl, task: "transcribe", language: "fr", translate: false, temperature: 0 },
@@ -49,56 +56,63 @@ export async function POST(req: NextRequest) {
       { file_url: audioUrl, task: "transcribe", language: "fr", translate: false, temperature: 0 },
     ];
 
-    for (let i = 0; i < inputsList.length; i++) {
-      const input = inputsList[i];
-      console.log(`🔄 Trying input format ${i + 1}/${inputsList.length}:`, Object.keys(input));
-      
-      try {
-        const createArgs: any = { input };
-        if (version) createArgs.version = version; else createArgs.model = modelSlug;
-        
-        console.log("Creating prediction with args:", { 
-          model: createArgs.model, 
-          version: createArgs.version,
-          inputKeys: Object.keys(input)
-        });
-        
-        const prediction = await replicate.predictions.create(createArgs);
-        console.log("Prediction created:", prediction.id, "status:", prediction.status);
+    const maxPolls = Number(processEnv.TRANSCRIBE_MAX_POLLS || 25); // ~50s
+    let lastErrorMessage = "";
+    let lastReplicateError: any = null;
 
-        let p: any = prediction;
-        if (p.status !== "succeeded") {
-          console.log("⏳ Waiting for prediction to complete...");
-          for (let j = 0; j < 60; j++) {
-            await new Promise(r => setTimeout(r, 2000));
-            p = await replicate.predictions.get(prediction.id);
-            console.log(`Poll ${j + 1}/60: status=${p.status}`);
-            if (p.status === "succeeded") break;
-            if (p.status === "failed" || p.status === "canceled") {
-              console.error("❌ Prediction failed:", p.error || p.status);
-              break;
+    for (let m = 0; m < modelCandidates.length; m++) {
+      const mCand = modelCandidates[m];
+      console.log(`🎯 Trying model ${m + 1}/${modelCandidates.length}:`, mCand.slug || "<version-only>", mCand.version || "latest");
+      for (let i = 0; i < inputsList.length; i++) {
+        const input = inputsList[i];
+        console.log(`🔄 Trying input format ${i + 1}/${inputsList.length}:`, Object.keys(input));
+        try {
+          const createArgs: any = { input };
+          if (mCand.version) createArgs.version = mCand.version; else if (mCand.slug) createArgs.model = mCand.slug;
+
+          console.log("Creating prediction with args:", { model: createArgs.model, version: createArgs.version, inputKeys: Object.keys(input) });
+
+          const prediction = await replicate.predictions.create(createArgs);
+          console.log("Prediction created:", prediction.id, "status:", prediction.status);
+
+          let p: any = prediction;
+          if (p.status !== "succeeded") {
+            console.log("⏳ Waiting for prediction to complete...");
+            for (let j = 0; j < maxPolls; j++) {
+              await new Promise(r => setTimeout(r, 2000));
+              p = await replicate.predictions.get(prediction.id);
+              console.log(`Poll ${j + 1}/${maxPolls}: status=${p.status}`);
+              if (p.status === "succeeded") break;
+              if (p.status === "failed" || p.status === "canceled") {
+                console.error("❌ Prediction failed:", p.error || p.status);
+                lastReplicateError = p.error || p.status;
+                break;
+              }
             }
           }
-        }
 
-        if (p.status === "succeeded") {
-          const transcript = normalizeWhisperOutput(p?.output);
-          console.log("✅ Transcript received:", transcript ? `${transcript.length} chars` : "empty");
-          if (typeof transcript === "string" && transcript.trim().length > 5) {
-            console.log("=== TRANSCRIBE SUCCESS ===");
-            return NextResponse.json({ transcript: transcript.trim() });
+          if (p.status === "succeeded") {
+            const transcript = normalizeWhisperOutput(p?.output);
+            console.log("✅ Transcript received:", transcript ? `${transcript.length} chars` : "empty");
+            if (typeof transcript === "string" && transcript.trim().length > 5) {
+              console.log("=== TRANSCRIBE SUCCESS ===");
+              return NextResponse.json({ transcript: transcript.trim() });
+            }
+          } else {
+            console.log("❌ Prediction final status:", p.status, p.error);
+            lastReplicateError = p.error || p.status;
           }
-        } else {
-          console.log("❌ Prediction final status:", p.status, p.error);
+        } catch (inputError: any) {
+          const msg = String(inputError?.message || inputError || "Unknown error");
+          lastErrorMessage = msg;
+          console.error(`❌ Input format ${i + 1} failed:`, msg);
+          // continue to next input or model
         }
-      } catch (inputError: any) {
-        console.error(`❌ Input format ${i + 1} failed:`, inputError.message);
-        // Continue to next input format
       }
     }
 
-    console.error("❌ All input formats failed");
-    return NextResponse.json({ error: "All transcription formats failed" }, { status: 502 });
+    console.error("❌ All input formats failed", { lastErrorMessage, lastReplicateError });
+    return NextResponse.json({ error: "All transcription formats failed", details: String(lastReplicateError || lastErrorMessage || "")?.slice(0, 400) }, { status: 502 });
   } catch (e: any) {
     console.error("❌ TRANSCRIBE ERROR:", e);
     return NextResponse.json({ error: e?.message || "Transcription error" }, { status: 500 });
