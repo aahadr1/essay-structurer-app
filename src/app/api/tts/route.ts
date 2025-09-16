@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const model = processEnv.REPLICATE_TTS_MODEL || "minimax/speech-02-turbo";
     // Prefer a native French narrator voice if env not set
     const voice = processEnv.MINIMAX_TTS_VOICE || "French_MaleNarrator";
-    const format = processEnv.MINIMAX_TTS_FORMAT || "mp3";
+    const fallbackFormat = processEnv.MINIMAX_TTS_FORMAT || "mp3";
     const speed = Number(processEnv.MINIMAX_TTS_SPEED || 1);
     const volume = Number(processEnv.MINIMAX_TTS_VOLUME || 1);
     const pitch = Number(processEnv.MINIMAX_TTS_PITCH || 0);
@@ -68,17 +68,47 @@ export async function POST(req: NextRequest) {
     }
     try {
       const buf = Buffer.from(await res.arrayBuffer());
-      const filename = `tts/${Date.now()}-${Math.random().toString(36).slice(2)}.${format}`;
+
+      // Preserve the original audio format when uploading to Supabase
+      const headerContentType = res.headers.get("content-type") || "";
+      const urlPath = (() => {
+        try {
+          const u = new URL(audioUrl);
+          return u.pathname.toLowerCase();
+        } catch {
+          return String(audioUrl || "").split("?")[0].toLowerCase();
+        }
+      })();
+      const extFromUrl = (() => {
+        const match = urlPath.match(/\.([a-z0-9]+)$/i);
+        return match ? match[1] : "";
+      })();
+      const extFromHeader = (() => {
+        if (headerContentType.startsWith("audio/")) {
+          return headerContentType.replace("audio/", "").split(";")[0].trim();
+        }
+        return "";
+      })();
+      const uploadExt = (extFromHeader || extFromUrl || fallbackFormat).replace(/[^a-z0-9]/g, "");
+      const uploadContentType = headerContentType && headerContentType.startsWith("audio/")
+        ? headerContentType
+        : `audio/${uploadExt || "mpeg"}`;
+
+      const filename = `tts/${Date.now()}-${Math.random().toString(36).slice(2)}.${uploadExt || "mp3"}`;
       const supabaseAdmin = getSupabaseAdmin();
       const { error } = await supabaseAdmin.storage.from(SUPABASE_BUCKET).upload(filename, buf, {
-        contentType: `audio/${format}`
+        contentType: uploadContentType
       });
       if (error) {
         console.warn("Supabase upload for TTS failed, falling back to direct URL", error);
         return NextResponse.json({ audioUrl });
       }
       const { data: pub } = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filename);
-      return NextResponse.json({ audioUrl: pub.publicUrl });
+      // Provide a signed URL to ensure playback even if bucket is private
+      const { data: signed } = await supabaseAdmin.storage
+        .from(SUPABASE_BUCKET)
+        .createSignedUrl(filename, 60 * 60); // 1 hour
+      return NextResponse.json({ audioUrl: signed?.signedUrl || pub.publicUrl });
     } catch (e) {
       console.warn("Supabase unavailable or misconfigured, returning direct Replicate URL", e);
       return NextResponse.json({ audioUrl });
