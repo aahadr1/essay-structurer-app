@@ -124,18 +124,27 @@ export default function Home() {
       const textToReformat = (draft && draft.trim().length >= combinedSections.trim().length)
         ? draft
         : (combinedSections || draft || "");
+      let finalTtsText = textToReformat;
       if (textToReformat && textToReformat.trim().length > 20) {
-        const reformatRes = await fetch("/api/reformat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: textToReformat }),
-        });
-        if (reformatRes.ok) {
-          const { reformattedText } = await reformatRes.json();
-          setReformattedText(reformattedText || "");
-        } else {
-          console.warn("Reformat failed, using original text");
+        try {
+          const reformatRes = await fetch("/api/reformat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: textToReformat }),
+          });
+          if (reformatRes.ok) {
+            const { reformattedText } = await reformatRes.json();
+            setReformattedText(reformattedText || "");
+            finalTtsText = (reformattedText || textToReformat);
+          } else {
+            console.warn("Reformat failed, using original text");
+            setReformattedText(textToReformat);
+            finalTtsText = textToReformat;
+          }
+        } catch (e) {
+          console.warn("Reformat error, using original text");
           setReformattedText(textToReformat);
+          finalTtsText = textToReformat;
         }
       }
 
@@ -156,8 +165,8 @@ export default function Home() {
         if (!/[.!?…]$/.test(s) && s) s += ".";
         return s;
       };
-      // Gate TTS strictly on corrected text
-      const ttsText = reformattedText;
+      // Gate TTS strictly on corrected text (use local variable to avoid async state race)
+      const ttsText = finalTtsText;
       if (ttsText && ttsText.trim().length > 10) {
         const ttsRes = await fetch("/api/tts", {
           method: "POST",
