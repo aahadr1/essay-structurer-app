@@ -47,7 +47,7 @@ Réponds UNIQUEMENT avec le texte reformaté, sans commentaires ni explications.
         messages,
         verbosity: "low",
         reasoning_effort: "low",
-        max_completion_tokens: 1000
+        max_completion_tokens: 4000
       }
     } as any);
 

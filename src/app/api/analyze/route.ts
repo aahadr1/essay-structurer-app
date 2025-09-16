@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
         ],
         verbosity: "low",
         reasoning_effort: "minimal",
-        max_completion_tokens: 2000,
+        max_completion_tokens: 4000,
       },
       // Generic prompt shapes for broader compatibility (if env overrides model)
       { prompt: `${system}\n\n${user}\n\n${gpt5JsonHint}` },

@@ -134,8 +134,11 @@ export default function Home() {
           });
           if (reformatRes.ok) {
             const { reformattedText } = await reformatRes.json();
-            setReformattedText(reformattedText || "");
-            finalTtsText = (reformattedText || textToReformat);
+            const candidate = (reformattedText || "").trim();
+            // Prefer the longer text to avoid truncation; fallback if candidate too short
+            const tooShort = !candidate || candidate.length < Math.max(200, Math.floor((textToReformat || "").length * 0.7));
+            finalTtsText = tooShort ? textToReformat : candidate;
+            setReformattedText(finalTtsText);
           } else {
             console.warn("Reformat failed, using original text");
             setReformattedText(textToReformat);
@@ -275,8 +278,10 @@ export default function Home() {
                 });
                 if (reformatRes.ok) {
                   const { reformattedText } = await reformatRes.json();
-                  setReformattedText(reformattedText || "");
-                  finalTtsText = reformattedText || textToReformat;
+                  const candidate = (reformattedText || "").trim();
+                  const tooShort = !candidate || candidate.length < Math.max(200, Math.floor((textToReformat || "").length * 0.7));
+                  finalTtsText = tooShort ? textToReformat : candidate;
+                  setReformattedText(finalTtsText);
                 }
               }
               
