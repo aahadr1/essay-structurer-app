@@ -42,12 +42,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Prepare model candidates: env first, then known stable fallbacks
+    // Prepare model candidates: env first, then a known good pinned version from env.example
     const modelCandidates: Array<{ slug?: string; version?: string }> = [];
     if (modelSlug || version) modelCandidates.push({ slug: modelSlug, version });
-    // Fallbacks: try known openai whisper identifiers without pinned version
-    modelCandidates.push({ slug: "openai/whisper-large-v3" });
-    modelCandidates.push({ slug: "openai/whisper" });
+    const defaultPinned = "openai/whisper:3c08daf437fe359eb158a5123c395673f0a113dd8b4bd01ddce5936850e2a981";
+    const [defSlug, defVer] = defaultPinned.split(":", 2);
+    modelCandidates.push({ slug: defSlug, version: defVer });
 
     // Try multiple input shapes accepted by different Whisper builds
     const inputsList = [
