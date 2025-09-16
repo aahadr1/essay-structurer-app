@@ -19,6 +19,19 @@ export default function Home() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [ttsUrl, setTtsUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Auto-play when TTS URL becomes available
+  useEffect(() => {
+    if (ttsUrl && audioRef.current) {
+      const el = audioRef.current;
+      el.autoplay = true;
+      const p: any = el.play();
+      if (p && typeof p.then === "function") {
+        p.catch((err: any) => console.warn("Autoplay blocked or failed:", err));
+      }
+    }
+  }, [ttsUrl]);
 
   useEffect(() => {
     let timer: any;
@@ -107,7 +120,10 @@ export default function Home() {
       setOutline([task_understanding, detailed_plan].filter(Boolean).join("\n\n"));
 
       // 4) Reformat text for TTS using GPT-5
-      const textToReformat = draft || [introduction, detailed_plan, conclusion].filter(Boolean).join(" ");
+      const combinedSections = [introduction, detailed_plan, conclusion].filter(Boolean).join(" \n\n");
+      const textToReformat = (draft && draft.trim().length >= combinedSections.trim().length)
+        ? draft
+        : (combinedSections || draft || "");
       if (textToReformat && textToReformat.trim().length > 20) {
         const reformatRes = await fetch("/api/reformat", {
           method: "POST",
@@ -235,8 +251,11 @@ export default function Home() {
               setDraft(draft || "");
               setOutline([task_understanding, detailed_plan].filter(Boolean).join("\n\n"));
               
-              // Reformat text for TTS
-              const textToReformat = draft || [introduction, detailed_plan, conclusion].filter(Boolean).join(" ");
+              // Reformat text for TTS (prefer full combined text)
+              const combinedSections = [introduction, detailed_plan, conclusion].filter(Boolean).join(" \n\n");
+              const textToReformat = (draft && draft.trim().length >= combinedSections.trim().length)
+                ? draft
+                : (combinedSections || draft || "");
               let finalTtsText = textToReformat;
               
               if (textToReformat && textToReformat.trim().length > 20) {
@@ -329,7 +348,7 @@ export default function Home() {
       {ttsUrl && (
         <div className="card">
           <div className="font-semibold mb-2">Audio outline</div>
-          <audio controls src={ttsUrl} className="w-full" />
+          <audio ref={audioRef} controls autoPlay preload="auto" src={ttsUrl} className="w-full" />
         </div>
       )}
     </main>
