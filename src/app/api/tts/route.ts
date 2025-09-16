@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { replicate } from "@/lib/replicate";
-import { supabaseAdmin, SUPABASE_BUCKET } from "@/lib/supabaseServer";
+import { getSupabaseAdmin, SUPABASE_BUCKET } from "@/lib/supabaseServer";
 import { prepareTextForTts } from "@/lib/textFormat";
 
 export const runtime = "nodejs";
@@ -66,17 +66,23 @@ export async function POST(req: NextRequest) {
       // if fetching fails, just return the original URL
       return NextResponse.json({ audioUrl });
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    const filename = `tts/${Date.now()}-${Math.random().toString(36).slice(2)}.${format}`;
-    const { error } = await supabaseAdmin.storage.from(SUPABASE_BUCKET).upload(filename, buf, {
-      contentType: `audio/${format}`
-    });
-    if (error) {
-      console.warn("Supabase upload for TTS failed, falling back to direct URL", error);
+    try {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const filename = `tts/${Date.now()}-${Math.random().toString(36).slice(2)}.${format}`;
+      const supabaseAdmin = getSupabaseAdmin();
+      const { error } = await supabaseAdmin.storage.from(SUPABASE_BUCKET).upload(filename, buf, {
+        contentType: `audio/${format}`
+      });
+      if (error) {
+        console.warn("Supabase upload for TTS failed, falling back to direct URL", error);
+        return NextResponse.json({ audioUrl });
+      }
+      const { data: pub } = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filename);
+      return NextResponse.json({ audioUrl: pub.publicUrl });
+    } catch (e) {
+      console.warn("Supabase unavailable or misconfigured, returning direct Replicate URL", e);
       return NextResponse.json({ audioUrl });
     }
-    const { data: pub } = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filename);
-    return NextResponse.json({ audioUrl: pub.publicUrl });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "TTS error" }, { status: 500 });

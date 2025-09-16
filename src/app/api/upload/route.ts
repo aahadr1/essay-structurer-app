@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin, SUPABASE_BUCKET } from "@/lib/supabaseServer";
+import { getSupabaseAdmin, SUPABASE_BUCKET } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
@@ -35,22 +35,28 @@ export async function POST(req: NextRequest) {
     .toString(36)
     .slice(2)}.${ext}`;
 
-  const { error } = await supabaseAdmin.storage
-    .from(SUPABASE_BUCKET)
-    .upload(filename, buffer, {
-      contentType: contentType,
-      upsert: false,
-    });
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { error } = await supabaseAdmin.storage
+      .from(SUPABASE_BUCKET)
+      .upload(filename, buffer, {
+        contentType: contentType,
+        upsert: false,
+      });
 
-  if (error) {
-    console.error("Supabase upload error:", error);
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    if (error) {
+      console.error("Supabase upload error:", error);
+      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    }
+
+    const { data: pub } = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filename);
+    // Provide a signed URL so Replicate can fetch even if bucket is private
+    const { data: signedData } = await supabaseAdmin.storage
+      .from(SUPABASE_BUCKET)
+      .createSignedUrl(filename, 60 * 60); // 1h
+    return NextResponse.json({ publicUrl: pub.publicUrl, signedUrl: signedData?.signedUrl || pub.publicUrl });
+  } catch (e) {
+    console.warn("Supabase unavailable or misconfigured; skipping upload", e);
+    return NextResponse.json({ publicUrl: null, signedUrl: null });
   }
-
-  const { data: pub } = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filename);
-  // Provide a signed URL so Replicate can fetch even if bucket is private
-  const { data: signedData } = await supabaseAdmin.storage
-    .from(SUPABASE_BUCKET)
-    .createSignedUrl(filename, 60 * 60); // 1h
-  return NextResponse.json({ publicUrl: pub.publicUrl, signedUrl: signedData?.signedUrl || pub.publicUrl });
 }

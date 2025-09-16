@@ -6,6 +6,7 @@
       "dom.iterable",
       "es2022"
     ],
+    "types": ["node"],
     "allowJs": false,
     "skipLibCheck": true,
     "strict": false,
